@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SAFE Company Domain Scraper - SAVES EVERY 50 ENTRIES
-Fixed version that will NEVER lose your work again
+WORKING Company Domain Scraper - Based on Your Original That Actually Worked
+Just added auto-save every 50 entries to the logic that was already working
 """
 
 import requests
@@ -11,7 +11,6 @@ import time
 from urllib.parse import urlparse
 import sys
 import os
-import random
 
 def extract_domain_from_url(url):
     """Extract just the domain name from a full URL"""
@@ -35,251 +34,184 @@ def extract_domain_from_url(url):
     except:
         return 'N/A'
 
-def is_blocked_domain(url):
-    """Enhanced domain blocking - NO MORE RIVALS.COM!"""
-    if not url:
-        return True
-    
-    try:
-        domain = urlparse(url).netloc.lower()
-    except:
-        return True
-    
-    # Comprehensive blocklist
-    blocked_domains = {
-        # Yahoo and all subdomains
-        'yahoo.com', 'finance.yahoo.com', 'yimg.com', 'yahooapis.com',
-        'yahoo.uservoice.com', 'yastatic.net',
-        
-        # Rivals - ALL variations blocked
-        'rivals.com', 'n.rivals.com', 'sports.rivals.com', 'www.rivals.com',
-        
-        # Ad networks
-        'googleadservices.com', 'googlesyndication.com', 'doubleclick.net',
-        'googletagmanager.com', 'google-analytics.com', 'googleanalytics.com',
-        'outbrain.com', 'taboola.com', 'adsystem.com', 'amazon-adsystem.com',
-        
-        # Social media
-        'facebook.com', 'twitter.com', 'linkedin.com', 'youtube.com',
-        'instagram.com', 'tiktok.com', 'pinterest.com',
-        
-        # Financial news (not company sites)
-        'sec.gov', 'edgar.sec.gov', 'bloomberg.com', 'reuters.com',
-        'marketwatch.com', 'fool.com', 'seekingalpha.com', 'cnbc.com',
-        'wsj.com', 'ft.com', 'barrons.com',
-    }
-    
-    # Check exact domain
-    if domain in blocked_domains:
-        return True
-    
-    # Check if any blocked domain is contained in this domain
-    for blocked in blocked_domains:
-        if blocked in domain:
-            return True
-    
-    # Block common ad patterns
-    ad_patterns = ['ads', 'ad-', 'track', 'analytics', 'pixel', 'beacon']
-    for pattern in ad_patterns:
-        if pattern in domain:
-            return True
-    
-    return False
-
 def get_company_website(ticker):
-    """Get company website from Yahoo Finance profile page"""
+    """Get company website from Yahoo Finance profile page - ORIGINAL WORKING VERSION"""
     
+    # Create the Yahoo Finance profile URL
     url = f"https://finance.yahoo.com/quote/{ticker}/profile/"
     
     try:
+        # Add headers to avoid being blocked - SAME AS ORIGINAL
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
-        response = requests.get(url, headers=headers, timeout=10)
+        # Make the request
+        response = requests.get(url, headers=headers)
         response.raise_for_status()
         
+        # Parse the HTML
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Look for external company website links
+        # Look for website information - ORIGINAL WORKING LOGIC
+        website = 'N/A'
+        
+        # Method 1: Look for external links in the profile section
         links = soup.find_all('a', href=True)
         for link in links:
-            href = link.get('href', '').strip()
-            
-            if (href and 
-                href.startswith(('http://', 'https://')) and 
-                len(href) > 10 and
-                not is_blocked_domain(href)):
-                
-                # Basic validation - looks like a company domain
-                domain = urlparse(href).netloc.lower()
-                if domain and '.' in domain and len(domain.split('.')) <= 3:
-                    return href
+            href = link.get('href', '')
+            # Skip Yahoo/internal links and look for external company websites
+            if href and not any(skip in href.lower() for skip in ['yahoo', 'finance.yahoo', 'javascript:', 'mailto:', '#']):
+                if href.startswith('http') and len(href) > 10:
+                    # This is likely an external website link
+                    website = href
+                    break
         
+        # Method 2: Look in specific sections (backup method)
+        if website == 'N/A':
+            # Sometimes the website is in a specific section
+            contact_sections = soup.find_all(['div', 'span', 'p'], text=lambda x: x and ('website' in x.lower() or 'web site' in x.lower()))
+            for section in contact_sections:
+                parent = section.find_parent()
+                if parent:
+                    link = parent.find('a', href=True)
+                    if link and link.get('href', '').startswith('http'):
+                        website = link.get('href')
+                        break
+        
+        return website
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching {ticker}: {e}")
         return 'N/A'
-        
     except Exception as e:
-        print(f"Error with {ticker}: {str(e)}")
+        print(f"Error parsing {ticker}: {e}")
         return 'N/A'
 
-def save_progress(results, output_file, domain_file, ticker_count):
-    """Save current progress - GUARANTEED SAVE"""
-    try:
-        # Save main results
-        df_results = pd.DataFrame(results)
-        df_results.to_csv(output_file, index=False)
-        
-        # Save domain-only file
-        successful_results = [r for r in results if r['Domain'] != 'N/A']
-        unique_domains = sorted(set([r['Domain'] for r in successful_results]))
-        
-        with open(domain_file, 'w') as f:
-            for domain in unique_domains:
-                f.write(domain + '\n')
-        
-        print(f"💾 SAVED: {ticker_count} tickers processed, {len(unique_domains)} domains found")
-        return True
-        
-    except Exception as e:
-        print(f"❌ SAVE ERROR: {e}")
-        return False
-
-def load_existing_results(output_file):
-    """Load existing results to resume from where we left off"""
-    if os.path.exists(output_file):
-        try:
-            df = pd.read_csv(output_file)
-            results = df.to_dict('records')
-            completed_tickers = set(df['Ticker'].tolist())
-            print(f"📊 RESUMING: Found {len(results)} existing results")
-            return results, completed_tickers
-        except:
-            print("⚠️ Could not load existing results, starting fresh")
+def scrape_company_domains(ticker_file, output_file):
+    """Main function to scrape domains for all tickers - WITH AUTO-SAVE EVERY 50"""
     
-    return [], set()
-
-def main():
-    """Main function - SAFE VERSION WITH AUTO-SAVE"""
-    
-    print("🛡️ SAFE Company Domain Scraper - AUTO-SAVES EVERY 50 ENTRIES")
-    print("=" * 60)
-    print("🔒 Your work will NEVER be lost again!")
-    print("💾 Saves progress every 50 tickers automatically")
-    
-    # File names
-    ticker_files = ["tickers.csv", "tickers.txt"]
-    ticker_file = None
-    
-    for file in ticker_files:
-        if os.path.exists(file):
-            ticker_file = file
-            break
-    
-    if not ticker_file:
-        print("❌ Error: No ticker file found!")
-        print("Please create 'tickers.csv' or 'tickers.txt'")
-        return
-    
-    output_file = "company_domains.csv"
-    domain_file = "domains_only.txt"
-    
-    # Load existing results (resume capability)
-    results, completed_tickers = load_existing_results(output_file)
-    
-    # Read ticker symbols
-    print(f"📖 Reading from: {ticker_file}")
+    # Read ticker symbols from file
+    print("Reading ticker symbols...")
     tickers = []
     
     try:
-        if ticker_file.endswith('.csv'):
-            df = pd.read_csv(ticker_file)
-            tickers = df.iloc[:, 0].dropna().astype(str).str.strip().str.upper().tolist()
-        else:
-            with open(ticker_file, 'r') as f:
-                tickers = [line.strip().upper() for line in f if line.strip()]
-    except Exception as e:
-        print(f"❌ Error reading {ticker_file}: {e}")
-        return
+        # Try reading as CSV first
+        df = pd.read_csv(ticker_file)
+        # Assume the ticker symbols are in the first column
+        tickers = df.iloc[:, 0].tolist()
+    except:
+        # If CSV fails, try reading as plain text file
+        with open(ticker_file, 'r') as f:
+            tickers = [line.strip() for line in f if line.strip()]
     
-    if not tickers:
-        print("❌ No ticker symbols found!")
-        return
+    print(f"Found {len(tickers)} ticker symbols")
     
-    # Remove duplicates and already completed tickers
-    unique_tickers = []
-    for ticker in tickers:
-        if ticker not in completed_tickers and ticker not in [t for t in unique_tickers]:
-            unique_tickers.append(ticker)
+    # Check for existing results to resume
+    existing_results = []
+    if os.path.exists(output_file):
+        try:
+            existing_df = pd.read_csv(output_file)
+            existing_results = existing_df.to_dict('records')
+            completed_tickers = set(existing_df['Ticker'].tolist())
+            print(f"Found existing results: {len(existing_results)} completed")
+            # Remove already completed tickers
+            tickers = [t for t in tickers if t not in completed_tickers]
+            print(f"Remaining to process: {len(tickers)}")
+        except:
+            print("Could not load existing results, starting fresh")
     
-    tickers = unique_tickers
+    # Create results list
+    results = existing_results.copy()  # Start with existing results
     
-    print(f"✅ Total new tickers to process: {len(tickers)}")
-    print(f"✅ Already completed: {len(completed_tickers)}")
-    
-    if not tickers:
-        print("🎉 All tickers already completed!")
-        return
-    
-    # Process tickers with GUARANTEED SAVING
-    success_count = 0
-    failed_count = 0
-    
-    print(f"\n🚀 Starting SAFE scraping...")
-    print(f"💾 Will save progress every 50 tickers")
-    print(f"⏱️ Estimated time: {len(tickers) * 3} seconds")
-    
-    for i, ticker in enumerate(tickers, 1):
-        print(f"[{i:4}/{len(tickers):4}] {ticker:<8}", end=' ')
+    # Process each ticker
+    for i, ticker in enumerate(tickers):
+        current_position = len(results) + 1
+        print(f"Processing {current_position}/{len(existing_results) + len(tickers)}: {ticker}")
         
-        # Get website
+        # Get the website URL
         website_url = get_company_website(ticker)
+        
+        # Extract just the domain name
         domain = extract_domain_from_url(website_url)
         
-        if domain != 'N/A' and website_url != 'N/A':
-            success_count += 1
-            print(f"✅ {domain}")
-        else:
-            failed_count += 1
-            print("❌ No website found")
-        
-        # Store result
+        # Add to results
         results.append({
             'Ticker': ticker,
             'Website_URL': website_url,
             'Domain': domain
         })
         
-        # SAVE EVERY 50 ENTRIES - GUARANTEED!
-        if i % 50 == 0:
-            save_progress(results, output_file, domain_file, len(results))
-            
-        # Progress summary every 100 tickers
-        if i % 100 == 0:
-            success_rate = (success_count / i) * 100
-            print(f"\n📊 Progress: {i}/{len(tickers)} | ✅ {success_count} | ❌ {failed_count} | Rate: {success_rate:.1f}%")
+        # SAVE EVERY 50 ENTRIES - GUARANTEED SAVE
+        if len(results) % 50 == 0:
+            try:
+                df_results = pd.DataFrame(results)
+                df_results.to_csv(output_file, index=False)
+                
+                # Also create domain-only file
+                domain_only_file = output_file.replace('.csv', '_domains_only.txt')
+                unique_domains = set([result['Domain'] for result in results if result['Domain'] != 'N/A'])
+                
+                with open(domain_only_file, 'w') as f:
+                    for domain in sorted(unique_domains):
+                        f.write(domain + '\n')
+                
+                print(f"💾 PROGRESS SAVED: {len(results)} total results, {len(unique_domains)} unique domains")
+                
+            except Exception as save_error:
+                print(f"❌ Save error: {save_error}")
         
-        # Respectful delay
-        delay = random.uniform(2, 4)
-        time.sleep(delay)
+        # Add a small delay to be respectful to Yahoo's servers
+        time.sleep(1)
+        
+        # Print progress every 10 tickers
+        if (i + 1) % 10 == 0:
+            print(f"Completed {i+1} new tickers...")
     
     # Final save
-    print(f"\n💾 Final save...")
-    save_progress(results, output_file, domain_file, len(results))
-    
-    # Final summary
-    total_success = len([r for r in results if r['Domain'] != 'N/A'])
-    success_rate = (total_success / len(results)) * 100
-    
-    print(f"\n🎉 SCRAPING COMPLETE - ALL DATA SAVED!")
-    print(f"📊 Final Results:")
-    print(f"   • Total processed: {len(results)}")
-    print(f"   • Websites found: {total_success} ({success_rate:.1f}%)")
-    print(f"   • Failed: {len(results) - total_success}")
-    
-    print(f"\n📁 Files created:")
-    print(f"   • {output_file} - Complete results")
-    print(f"   • {domain_file} - Clean domain list")
-    print(f"\n🔒 Your work is SAFE and SAVED!")
+    print(f"Saving final results to {output_file}...")
+    try:
+        df_results = pd.DataFrame(results)
+        df_results.to_csv(output_file, index=False)
+        
+        # Also create a simple domain-only file
+        domain_only_file = output_file.replace('.csv', '_domains_only.txt')
+        unique_domains = set([result['Domain'] for result in results if result['Domain'] != 'N/A'])
+        
+        with open(domain_only_file, 'w') as f:
+            for domain in sorted(unique_domains):
+                f.write(domain + '\n')
+        
+        print(f"\nComplete! Results saved to:")
+        print(f"- Full results: {output_file}")
+        print(f"- Domain list only: {domain_only_file}")
+        print(f"- Found {len(unique_domains)} unique domains out of {len(results)} total companies")
+        
+    except Exception as e:
+        print(f"❌ Final save error: {e}")
+
+# HOW TO USE THIS SCRIPT:
+# 1. Save your ticker symbols in a file called 'tickers.txt' (one per line) or 'tickers.csv'
+# 2. Run the script
+# 3. Results will be saved to 'company_domains.csv'
+# 4. Progress is saved every 50 entries automatically
 
 if __name__ == "__main__":
-    main()
+    # Change these file names if needed
+    ticker_input_file = "tickers.txt"  # or "tickers.csv"
+    output_file = "company_domains.csv"
+    
+    # Check which ticker file exists
+    if os.path.exists("tickers.csv"):
+        ticker_input_file = "tickers.csv"
+    elif os.path.exists("tickers.txt"):
+        ticker_input_file = "tickers.txt"
+    else:
+        print("❌ No ticker file found! Please create 'tickers.csv' or 'tickers.txt'")
+        sys.exit(1)
+    
+    print(f"🚀 Using ticker file: {ticker_input_file}")
+    print(f"💾 Will save progress every 50 entries to: {output_file}")
+    print(f"🔄 Can resume if interrupted")
+    
+    scrape_company_domains(ticker_input_file, output_file)

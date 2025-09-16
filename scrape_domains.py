@@ -73,13 +73,13 @@ def main():
     """Main function"""
     
     # File names
-    ticker_file = "tickers.txt"
+    ticker_file = "tickers.csv"
     output_file = "company_domains.csv"
     
     # Check if ticker file exists
     if not os.path.exists(ticker_file):
         print(f"❌ Error: {ticker_file} not found!")
-        print("Please create a tickers.txt file with one ticker per line")
+        print("Please create a tickers.csv file with one ticker per line")
         print("Example:")
         print("AAPL")
         print("GOOGL")
